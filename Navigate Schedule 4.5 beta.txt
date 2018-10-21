@@ -11,6 +11,8 @@ var rotate = [];
 
 var anim = [];
 
+var delay = [];
+
 //Settings - Player can adjust, if you know what you're doing...
 
 var timesync = true; //If enabled, NPC will check for anomalies, such as if the /time set command has been used, or if the NPC is a follower and to turn off/on the schedule code.
@@ -39,6 +41,7 @@ var startArray = 0;
 var endArray = 0;
 var follower = 0;
 var myJob = 0;
+var delayLapsed = false;
 
 
 function init (event){
@@ -114,9 +117,8 @@ function timer (event){
 				expectTime = lastTime + syncInterval;
 			}
 			if(diagnostics==true){event.npc.say("The correct time is " + worldTime + ", and the last checked time was " + lastTime + ", and the expected time is " + expectTime + ".");}
-			
-
-			if(!(expectTime <= worldTime + 1 && expectTime >= worldTime - 1)){ //Has time moved?
+//Has time not what it is expected to be?		
+			if(!(expectTime <= worldTime + 1 && expectTime >= worldTime - 1)){
 				if(diagnostics==true){event.npc.say("What the wormhole? The time just changed!");}
 				event.npc.timers.stop(1);
 				event.npc.timers.start(1,1,false);		
@@ -210,26 +212,42 @@ function timer (event){
 					event.npc.ai.setStandingType(1);
 					event.npc.ai.setAnimation(anim[id]);
 					event.npc.setRotation(rotate[id]);
+					event.npc.setPosition(toX[id]+0.5,toY[id]+0.5,toZ[id]+0.5);
 					lastX = 0; lastY= 0 ; lastZ = 0;
 					event.npc.timers.stop(2);
 					event.npc.say("This is the end point.");
 				}
 //This is not an end point.
 				else{
-//Is the next id around the clock? (Is the next id tomorrow?)
-					if(id+1>=schedule.length){
-						id = 0;
-					}
-//The next id is next in sequence.
-					else{
-						id = id+1;
-					}
+
+//Is there a delay assigned to this point, or has the delay run its course?
+					if(delay[id]==0||delayLapsed==true){
 						if(diagnostics==true){event.npc.say("I'm at a point, and on to the next.");}
-						event.npc.navigateTo(toX[id],toY[id],toZ[id],speed);
-						lastX = myX; lastY= myY ; lastZ = myZ;
-						event.npc.ai.setAnimation(0);
-						event.npc.timers.stop(2);
-						event.npc.timers.start(2,40,false);
+//Is the next id around the clock? (Is the next id tomorrow?)
+							if(id+1>=schedule.length){
+								id = 0;
+							}
+//The next id is next in sequence.
+							else{
+								id = id+1;
+							}
+							event.npc.navigateTo(toX[id],toY[id],toZ[id],speed);
+							lastX = myX; lastY= myY ; lastZ = myZ;
+							delayLapsed = false;
+							event.npc.ai.setAnimation(0);
+							event.npc.timers.stop(2);
+							event.npc.timers.start(2,40,false);
+						}
+//There is a delay. Apply animation, rotation, etc, as if at major point.
+						else{
+							event.npc.ai.setStandingType(1);
+							event.npc.ai.setAnimation(anim[id]);
+							event.npc.setRotation(rotate[id]);
+//							event.npc.setPosition(toX[id]+0.5,toY[id]+0.5,toZ[id]+0.5);
+							event.npc.timers.stop(2);
+							event.npc.timers.stop(3);
+							event.npc.timers.start(3,delay[id],false);
+						}	
 					}
 				}
 //The NPC is not at a marker.
@@ -267,8 +285,15 @@ function timer (event){
 			}
 		}
 	}
+//Timer 3 - Handles planned delays at nav points.
+	if (event.id == 3){
+		delayLapsed = true;
+		event.npc.timers.stop(2);
+		event.npc.timers.start(2,1,false);
+	}
 } //end timer events
 
-//Current problems - Can't have a path that returns to itself without a timed point within the loop. Setting rotation whilst in certain animations (namely sleeping) doesn't work.
-//Need to mount NPCs to furniture properly - to do. Will probably solve above issue. MCF showers may prove difficult to mount, need to test.
+//Current problems - Can't have a path that returns to itself without a timed point within the loop. 
+//Setting rotation whilst in certain animations (namely sleeping) doesn't work.
+//Need to mount NPCs to furniture properly. I've made improvements, but true mounting doesn't seem possible.
 //Now checks if NPC is following, disables various parts of code if so.
