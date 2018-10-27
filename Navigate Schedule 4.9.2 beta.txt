@@ -1,0 +1,501 @@
+//Arrays - Use values in spreadsheet!
+var schedule = [];
+
+var toX = [];
+
+var toY = [];
+
+var toZ = [];
+
+var rotate = [];
+
+var anim = [];
+
+var delay = [];
+
+var movingArms = [];
+
+var leftItem = [];
+
+var rightItem = [];
+
+var helmet = [];
+
+var shirt = [];
+
+var pants = [];
+
+var boots = [];
+
+var skin = [];
+
+//Settings - Player can adjust.
+
+var openHours = [0,24000]; //If the NPC is a trader you can specify the opening hours. Values in ticks, 24000 in a day. First value is opening, second is closing. Default [0,24000] - open all day.
+
+var syncInterval = 400; //How often NPC will check for anomalies, such as the /time set command.
+
+var speed = 2; //NPC's speed. Blocks per second, I think.
+
+var diagnostics = true; //If true, NPC will talk about what they are doing as they navigate. Disable this once you're satisfied the schedule is working correctly.
+
+var typoChecker = true; //If true, NPC will scan the items/armour variables for typos. If there is a typo, an error will appear in the console. Otherwise the NPC will say all clear. Turn off once your script is finalised and all clear. Note this won't pick up skin errors!
+
+var swingInterval = 40; //How often NPC will swing their hand when assigned to do so, measured in ticks. Default 40. Not recommended to set below 20.
+
+
+//Dynamic variables - Don't tamper with these, although it probably won't matter, since they'll change as required.
+var worldTime = 0;
+var lastTime = 0;
+var expectTime = 0;
+var timesync = true;
+var id = 0;
+var end = 0;
+var myX = 0;
+var myY = 0;
+var myZ = 0;
+var isStopped = false;
+var isDay = true;
+var lastX = 0;
+var lastY = 0;
+var lastZ = 0;
+var startArray = 0;
+var endArray = 0;
+var delayLapsed = false;
+var altHand = false;
+var randomHand = swingInterval;
+
+
+
+function init (event){
+	if(event.npc.getRole() && event.npc.getRole().type == 2 && event.npc.getRole().getDays() > 0){
+		if(diagnostics==true){event.npc.say("Still here!");}
+		//Assign follower dialog.
+	}
+	else{
+		//Boot up the schedule checker.
+		event.npc.timers.stop(1);
+		event.npc.timers.start(1,1,false);
+
+//Boot up the /time set checker.	
+		if(timesync == true){
+			event.npc.timers.stop(0);
+			event.npc.timers.start(0,syncInterval,false);
+			//Assign normal dialog.
+		}
+	}
+		
+	worldTime = (event.npc.world.getTime() % 24000);
+	lastTime = worldTime;
+	
+//Set some parameters
+	event.npc.ai.setMovingType(0);
+	event.npc.ai.setReturnsHome (false);
+	event.npc.ai.setAnimation(0);
+	event.npc.ai.setDoorInteract (1);
+	event.npc.ai.setStandingType(1);
+	
+//Run an item typo checker (Item and armour variables are very prone to typos, this will catch them early on).
+	if(typoChecker==true){
+		event.npc.say("Running item variable typo checker. If I don't say all clear, the error is in the item after the one I'm holding/wearing.");
+		for (var d = 0; d < schedule.length; d++){
+			if(leftItem[d]!=0){
+				event.npc.inventory.setLeftHand(event.npc.world.createItem(leftItem[d][0],leftItem[d][1],1));
+			}
+			if(rightItem[d]!=0){
+				event.npc.inventory.setRightHand(event.npc.world.createItem(rightItem[d][0],rightItem[d][1],1));
+			}
+			if(helmet[d]!=0){
+				event.npc.inventory.setArmor(0,event.npc.world.createItem(helmet[d][0],helmet[d][1],1));
+			}
+			if(shirt[d]!=0){
+				event.npc.inventory.setArmor(1,event.npc.world.createItem(shirt[d][0],shirt[d][1],1));
+			}
+			if(pants[d]!=0){
+				event.npc.inventory.setArmor(2,event.npc.world.createItem(pants[d][0],pants[d][1],1));
+			}
+			if(boots[d]!=0){
+				event.npc.inventory.setArmor(0,event.npc.world.createItem(boots[d][0],boots[d][1],1));
+			}
+		}
+		event.npc.inventory.setLeftHand(event.npc.world.createItem("minecraft:air",0,1));
+		event.npc.inventory.setRightHand(event.npc.world.createItem("minecraft:air",0,1));
+		event.npc.inventory.setArmor(0,event.npc.world.createItem("minecraft:air",0,1));
+		event.npc.inventory.setArmor(1,event.npc.world.createItem("minecraft:air",0,1));
+		event.npc.inventory.setArmor(2,event.npc.world.createItem("minecraft:air",0,1));
+		event.npc.inventory.setArmor(3,event.npc.world.createItem("minecraft:air",0,1));
+		event.npc.say("All clear. No item variable typos found.")
+	}
+	
+//Identify the major start and end points of the schedule array. This allows for navigating around the clock.
+	for(var a = 0; a < schedule.length-1; a++){
+		if (schedule[a]>-1){
+		startArray = a;
+		break;
+		}
+	}
+	for(var b = schedule.length-1; b > -1; b--){
+		if (schedule[b]>-1){
+		endArray = b;
+		break;
+	}
+}
+if(diagnostics==true){event.npc.say("The first major point in the array is " + startArray + ", and the end is " + endArray + ".");}
+
+} //end init event
+
+//Check if NPC is held up due to fighting.
+function target (event){
+	isStopped = true;
+}
+
+function targetLost (event){
+	isStopped = false;
+}
+
+function timer (event){
+//Timesync, if enabled. Corrects schedule if /time set command used.
+
+	if (event.id == 0){
+		worldTime = (event.npc.world.getTime() % 24000);
+		if (lastTime >= 24000-syncInterval){
+			expectTime = (lastTime - 24000 + syncInterval);
+		}
+		else{
+			expectTime = lastTime + syncInterval;
+		}
+		if(diagnostics==true){event.npc.say("The correct time is " + worldTime + ", and the last checked time was " + lastTime + ", and the expected time is " + expectTime + ".");}
+//Has time not what it is expected to be?		
+		if(!(expectTime <= worldTime + 1 && expectTime >= worldTime - 1)){
+			if(diagnostics==true){event.npc.say("What the wormhole? The time just changed!");}
+			event.npc.timers.stop(1);
+			event.npc.timers.start(1,1,false);		
+		}
+		lastTime = worldTime;
+		event.npc.timers.stop(0);
+		event.npc.timers.start(0,syncInterval,false);
+    } //end timer 0 events
+    
+//Timer to check schedule at major points
+    if (event.id == 1){
+		
+
+//Work out NPC's schedule.
+		worldTime = (event.npc.world.getTime() % 24000);
+		for(var c = schedule.length-1; c > -2; c--){
+			if (schedule[c] < worldTime && schedule[c]>-1){
+				id= c;
+				break;
+			}
+			if (schedule[c]>-1){
+				end = c;
+			}
+		}
+//Check if the NPC is working around the clock
+		if (id >= endArray){
+			end = startArray;
+		}
+		if (id == -1){
+			id = endArray;
+		}    
+		if(diagnostics==true){event.npc.say("The time is " + worldTime + ", the current scheduled time is " + schedule[id] + ", and the next scheduled time is " + schedule[end] + ".");}
+
+//Start timer 1 proportionate to time remaining.
+		event.npc.timers.stop(1);
+		if(end>id){
+			event.npc.timers.start(1,schedule[end]-worldTime,false);
+		}
+		else{
+			event.npc.timers.start(1,24000-worldTime+schedule[end],false); 
+		}
+		event.npc.timers.stop(2);
+		event.npc.timers.start(2,1,false);        
+    } //End timer 1 events
+    
+//Timer 2 - For managing navigation, animations, items, etc.
+    if (event.id == 2){
+        myX = event.npc.getBlockX();
+        myY = event.npc.getBlockY();
+        myZ = event.npc.getBlockZ();
+        if(diagnostics==true){event.npc.say("My current location is " + myX + ", " + myY + ", " + myZ + ".");}
+		
+//Does the NPC have a reason for not moving?   
+		if(isStopped==true){
+			event.npc.timers.stop(2);
+			event.npc.timers.start(2,40,false);
+			event.npc.timers.stop(4);
+		}
+//The NPC has no reason for standing still.
+		else{
+//Is the NPC at a marker?
+			if(myX == toX[id] && myY <= toY[id] + 2 && myY >= toY[id] - 2 && myZ == toZ[id]){
+
+//Is this the end point? 
+				if (id == end){
+					event.npc.ai.setStandingType(1);
+					event.npc.ai.setAnimation(anim[id]);
+					event.npc.setRotation(rotate[id]);
+					event.npc.setPosition(toX[id]+0.5,toY[id]+0.5,toZ[id]+0.5);
+//Assign items in hands, provided there is supposed to be an item held.
+					if(leftItem[id]!=0){
+						event.npc.inventory.setLeftHand(event.npc.world.createItem(leftItem[id][0],leftItem[id][1],1));	
+					}
+					else{
+						event.npc.inventory.setLeftHand(event.npc.world.createItem("minecraft:air",0,1));
+					}
+					if(rightItem[id]!=0){
+						event.npc.inventory.setRightHand(event.npc.world.createItem(rightItem[id][0],rightItem[id][1],1));	
+					}
+					else{
+						event.npc.inventory.setRightHand(event.npc.world.createItem("minecraft:air",0,1));
+					}
+//Assign armour, provided there is supposed to be armour worn.
+					if(helmet[id]!=0){
+						event.npc.inventory.setArmor(0,event.npc.world.createItem(helmet[id][0],helmet[id][1],1));
+					}
+					else{
+						event.npc.inventory.setArmor(0,event.npc.world.createItem("minecraft:air",0,1));
+					}
+					if(shirt[id]!=0){
+						event.npc.inventory.setArmor(1,event.npc.world.createItem(shirt[id][0],shirt[id][1],1));
+					}
+					else{
+						event.npc.inventory.setArmor(1,event.npc.world.createItem("minecraft:air",0,1));
+					}
+					if(pants[id]!=0){
+						event.npc.inventory.setArmor(2,event.npc.world.createItem(pants[id][0],pants[id][1],1));
+					}
+					else{
+						event.npc.inventory.setArmor(2,event.npc.world.createItem("minecraft:air",0,1));
+					}
+					if(boots[id]!=0){
+						event.npc.inventory.setArmor(3,event.npc.world.createItem(boots[id][0],boots[id][1],1));
+					}
+					else{
+						event.npc.inventory.setArmor(3,event.npc.world.createItem("minecraft:air",0,1));
+					}
+//Assign skin, if it has changed
+					if(skin[id]!=0){
+						event.npc.display.setSkinTexture("customnpcs:textures/entity/" + skin[id] + ".png");
+					}
+					lastX = 0; lastY= 0 ; lastZ = 0;
+					event.npc.timers.stop(2);
+					event.npc.say("This is the end point.");
+					if(movingArms[id]>0){
+						event.npc.timers.stop(4);
+						event.npc.timers.start(4,10,false);
+					}
+				}
+//This is not an end point.
+				else{
+
+//Is there no delay assigned to this point, or has the delay run its course?
+					if(delay[id]==0||delayLapsed==true){
+						if(diagnostics==true){event.npc.say("I'm at a point, and on to the next.");}
+//Is the next id around the clock? (Is the next id tomorrow?)
+							if(id+1>=schedule.length){
+								id = 0;
+							}
+//The next id is next in sequence.
+							else{
+								id = id+1;
+							}
+							event.npc.navigateTo(toX[id],toY[id],toZ[id],speed);
+							lastX = myX; lastY= myY ; lastZ = myZ;
+							delayLapsed = false;
+							event.npc.ai.setAnimation(0);
+							event.npc.timers.stop(2);
+							event.npc.timers.start(2,10,false);
+							event.npc.timers.stop(4);
+						}
+//There is a delay. Apply animation, rotation, etc, as if at major point.
+						else{
+							event.npc.ai.setStandingType(1);
+							event.npc.ai.setAnimation(anim[id]);
+							event.npc.setRotation(rotate[id]);
+							//event.npc.setPosition(toX[id]+0.5,toY[id]+0.5,toZ[id]+0.5); - This is scrambling the code for some reason, so leaving it out.
+//Assign items in hands, provided there is supposed to be an item held, and the item is different from last assigned item.
+							if(leftItem[id]!=0){
+								event.npc.inventory.setLeftHand(event.npc.world.createItem(leftItem[id][0],leftItem[id][1],1));	
+							}
+							else{
+								event.npc.inventory.setLeftHand(event.npc.world.createItem("minecraft:air",0,1));
+							}
+							if(rightItem[id]!=0){
+								event.npc.inventory.setRightHand(event.npc.world.createItem(rightItem[id][0],rightItem[id][1],1));	
+							}
+							else{
+								event.npc.inventory.setRightHand(event.npc.world.createItem("minecraft:air",0,1));
+							}
+							if(helmet[id]!=0){
+								event.npc.inventory.setArmor(0,event.npc.world.createItem(helmet[id][0],helmet[id][1],1));
+							}
+							else{
+								event.npc.inventory.setArmor(0,event.npc.world.createItem("minecraft:air",0,1));
+							}
+							if(shirt[id]!=0){
+								event.npc.inventory.setArmor(1,event.npc.world.createItem(shirt[id][0],shirt[id][1],1));
+							}
+							else{
+								event.npc.inventory.setArmor(1,event.npc.world.createItem("minecraft:air",0,1));
+							}
+							if(pants[id]!=0){
+								event.npc.inventory.setArmor(2,event.npc.world.createItem(pants[id][0],pants[id][1],1));
+							}
+							else{
+								event.npc.inventory.setArmor(2,event.npc.world.createItem("minecraft:air",0,1));
+							}
+							if(boots[id]!=0){
+								event.npc.inventory.setArmor(3,event.npc.world.createItem(boots[id][0],boots[id][1],1));
+							}
+							else{
+								event.npc.inventory.setArmor(3,event.npc.world.createItem("minecraft:air",0,1));
+							}
+							if(skin[id]!=0){
+								event.npc.display.setSkinTexture("customnpcs:textures/entity/" + skin[id] + ".png");
+							}
+							event.npc.timers.stop(2);
+							event.npc.timers.stop(3);
+							event.npc.timers.start(3,delay[id],false);
+							if(movingArms[id]>0){
+								event.npc.timers.stop(4);
+								event.npc.timers.start(4,10,false);
+							}
+						}	
+					}
+				}
+//The NPC is not at a marker.
+			else{
+//Is the NPC navigating? (Note - this is hit and miss.)
+				isNav = event.npc.isNavigating();
+				
+				if(isNav==true){
+					event.npc.timers.stop(2);
+					event.npc.timers.start(2,40,false);
+					if(diagnostics==true){event.npc.say("I'm travelling between points.");}
+				}
+//The NPC is not navigating.
+				else{
+//Is the NPC stuck?
+					if (myX==lastX && myY <= lastY + 1 && myY >= lastY - 1  && myZ == lastZ){
+						lastX = 0;
+						lastY = 0;
+						lastZ = 0;
+						event.npc.setPosition(toX[id],toY[id],toZ[id]);
+						if(diagnostics==true){event.npc.say("I'm stuck... teleport!");}
+						event.npc.timers.stop(2);
+						event.npc.timers.start(2,1,false);
+					}  
+//The NPC is not stuck.
+					else{
+					lastX = myX; lastY= myY ; lastZ = myZ;
+					event.npc.navigateTo(toX[id],toY[id],toZ[id],speed);
+					event.npc.ai.setAnimation(0);
+					event.npc.timers.stop(2);
+					event.npc.timers.start(2,40,false);
+					if(diagnostics==true){event.npc.say("I should be navigating, but I wasn't. Now I am.");}
+					}     
+				}
+			}
+		}
+	}
+//Timer 3 - Handles planned delays at nav points.
+	if (event.id == 3){
+		delayLapsed = true;
+		event.npc.timers.stop(2);
+		event.npc.timers.start(2,1,false);
+	}
+//Timer 4 - Handles hand movement. Pun not intended.
+	if(event.id == 4){
+//Move main hand repeatedly.
+		if(movingArms[id]==1){
+			event.npc.swingMainhand();
+			event.npc.timers.stop(4);
+			event.npc.timers.start(4,swingInterval,false);
+		}
+//Move off hand repeatedly.
+		else if(movingArms[id]==2){
+			event.npc.swingOffhand();
+			event.npc.timers.stop(4);
+			event.npc.timers.start(4,swingInterval,false);
+		}
+//Move both hands, alternating.
+		else if(movingArms[id]==3){
+			if(altHand==false){
+				event.npc.swingMainhand();
+				altHand = true;
+			}
+			else{
+				event.npc.swingOffhand();
+				altHand = false;
+			}
+			event.npc.timers.stop(4);
+			event.npc.timers.start(4,swingInterval,false);
+		}
+//Move main hand random interval between swingInterval and swingInterval+40.
+		else if(movingArms[id]==4){
+			randomHand = Math.floor((Math.random()*41)+swingInterval);
+			event.npc.swingMainhand();
+			event.npc.timers.stop(4);
+			event.npc.timers.start(4,randomHand,false);
+		}
+//Move off hand random interval between swingInterval and swingInterval+40.
+		else if(movingArms[id]==5){
+			randomHand = Math.floor((Math.random()*41)+swingInterval);
+			event.npc.swingOffhand();
+			event.npc.timers.stop(4);
+			event.npc.timers.start(4,randomHand,false);
+		}
+//Move either hand randomly at a random interval between swingInterval and swingInterval+40. Random hands!
+		else if(movingArms[id]==6){
+			randomHand = Math.floor((Math.random()*41)+swingInterval);
+			altHand = Math.round(Math.random());
+			if(altHand==false){
+				event.npc.swingMainhand();
+			}
+			else{
+				event.npc.swingOffhand();
+			}
+			event.npc.timers.stop(4);
+			event.npc.timers.start(4,randomHand,false);	
+		}
+	}
+} //end timer events
+
+//Switch nav code off if follower. Otherwise turn it back on.
+function role (event){
+	if(event.days) {
+		event.npc.timers.stop(0);
+		event.npc.timers.stop(1);
+		event.npc.timers.stop(2);
+		event.npc.timers.stop(3);
+		event.npc.timers.stop(4);
+		event.npc.ai.setAnimation(0);
+		event.npc.ai.setStandingType(0);
+//assign follower dialog
+    } else {
+		event.npc.timers.start(0,1,false);
+		expectTime = -500;
+//assign standard dialog
+    }
+}
+
+//If NPC is a trader, only allow NPC to trade within opening hours.
+function interact (event){
+	if(event.npc.getRole() && event.npc.getRole().type == 1){
+		worldTime = (event.npc.world.getTime() % 24000);
+		if(worldTime>openHours[0] && worldTime<openHours[1]) {
+//Assign trader dialog.
+			if(diagnostics==true){event.npc.say("Open for business!");}
+		} else {
+//Assign standard dialog.
+			if(diagnostics==true){event.npc.say("The shop is closed.");}
+			event.setCanceled(1);
+		}
+	}
+}
+
+//Current problems - Can't have a path that returns to itself without a timed point within the loop. 
+//Setting rotation whilst in certain animations (namely sleeping) doesn't work. Need to make a work around.
+//Need to mount NPCs to furniture properly. I've made improvements, but true mounting doesn't seem possible. Some mod furniture items are more problematic than others.
+//Now checks if NPC is following, disables various parts of code if so.
